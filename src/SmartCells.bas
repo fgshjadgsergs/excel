@@ -77,7 +77,8 @@ Public Sub ОбновитьДанные()
     ПройтиПоТексту doc, problems
 
     ' 5. Проход (б): перечитать значения всех CC XL:* из Excel
-    updated = ПройтиПоCC(doc, xlWs, problems)
+    '    (лист по умолчанию — xlWs; метки {Лист!A5} читаются из своих листов)
+    updated = ПройтиПоCC(doc, xlWb, xlWs, problems)
 
 CleanUp:
     ' --- Гарантированное закрытие Excel и освобождение объектов ---
@@ -103,13 +104,13 @@ Fail:
 End Sub
 
 ' ---------------------------------------------------------------------
-'  Проход (а): поиск меток {адрес} в тексте и превращение их в CC.
-'  Проблемные метки (кириллица, некорректный адрес) — подсветить и
-'  включить в список, текст не трогать.
+'  Проход (а): поиск меток {адрес} или {Лист!адрес} и превращение их в CC.
+'  Проблемные метки (кириллица в адресе, некорректный адрес) — подсветить
+'  и включить в список, текст не трогать.
 ' ---------------------------------------------------------------------
 Private Sub ПройтиПоТексту(ByVal doc As Document, ByVal problems As Collection)
     Dim rng As Range
-    Dim inner As String, addr As String
+    Dim inner As String, sheetName As String, addr As String, ref As String
     Dim cc As ContentControl
 
     Set rng = doc.Content
@@ -120,24 +121,31 @@ Private Sub ПройтиПоТексту(ByVal doc As Document, ByVal problems A
         .Wrap = wdFindStop
         .Format = False
         .MatchWildcards = True
-        ' {  +  1 и более букв/цифр (лат./кир.)  +  }
-        .Text = "\{[0-9A-Za-zА-Яа-яЁё]@\}"
+        ' {  +  1 и более букв/цифр/пробелов/«!»/«_» (лат./кир.)  +  }
+        ' допускается необязательное имя листа перед «!»: {Лист!A5}
+        .Text = "\{[0-9A-Za-zА-Яа-яЁё !_]@\}"
 
         Do While .Execute
-            ' rng указывает на найденную метку вида {A5}
+            ' rng указывает на найденную метку вида {A5} или {Лист!A5}
             inner = Mid$(rng.Text, 2, Len(rng.Text) - 2)   ' содержимое без скобок
+            РазобратьСсылку inner, sheetName, addr
 
-            If СодержитКириллицу(inner) Then
-                ' Метка с русскими буквами — частая ошибка пользователя
+            If СодержитКириллицу(addr) Then
+                ' Русские буквы в АДРЕСЕ — частая ошибка (имя листа может быть русским)
                 ПодсветитьДиапазон rng, True
                 Добавить problems, inner & " — адрес набран русскими буквами"
                 rng.Collapse wdCollapseEnd
 
-            ElseIf КорректныйАдрес(inner) Then
-                ' Корректная метка — превращаем в Content Control
-                addr = UCase$(inner)
+            ElseIf КорректныйАдрес(addr) Then
+                ' Корректная метка — превращаем в Content Control.
+                ' В тег пишем адрес в верхнем регистре, имя листа — как есть.
+                If Len(sheetName) > 0 Then
+                    ref = sheetName & "!" & UCase$(addr)
+                Else
+                    ref = UCase$(addr)
+                End If
                 Set cc = doc.ContentControls.Add(wdContentControlText, rng)
-                cc.Tag = TAG_PREFIX & addr
+                cc.Tag = TAG_PREFIX & ref
                 cc.Title = CC_TITLE
                 ' Значение подставит проход (б); rng теперь — диапазон CC
                 rng.SetRange cc.Range.End, cc.Range.End
@@ -157,36 +165,70 @@ End Sub
 
 ' ---------------------------------------------------------------------
 '  Проход (б): перечитать значения всех CC с тегом XL:* и обновить текст.
-'  Возвращает количество успешно обновлённых ячеек.
+'  Лист выбирается по метке: {Лист!A5} — из указанного листа книги,
+'  {A5} — из листа по умолчанию (из настроек). Возвращает число обновлённых.
 ' ---------------------------------------------------------------------
-Private Function ПройтиПоCC(ByVal doc As Document, ByVal ws As Object, _
-                            ByVal problems As Collection) As Long
+Private Function ПройтиПоCC(ByVal doc As Document, ByVal wb As Object, _
+                            ByVal defaultWs As Object, ByVal problems As Collection) As Long
     Dim cc As ContentControl
-    Dim addr As String, val As String, reason As String
+    Dim ref As String, sheetName As String, addr As String
+    Dim val As String, reason As String
+    Dim ws As Object
     Dim code As Long
     Dim updated As Long
 
     For Each cc In doc.ContentControls
         If Left$(cc.Tag, Len(TAG_PREFIX)) = TAG_PREFIX Then
-            addr = Mid$(cc.Tag, Len(TAG_PREFIX) + 1)
-            code = ПрочитатьЯчейку(ws, addr, val, reason)
+            ref = Mid$(cc.Tag, Len(TAG_PREFIX) + 1)
+            РазобратьСсылку ref, sheetName, addr
 
-            Select Case code
-                Case 0
-                    ' Успех — подставить значение, снять подсветку
-                    cc.Range.Text = val
-                    ПодсветитьДиапазон cc.Range, False
-                    updated = updated + 1
-                Case Else
-                    ' Проблема — значение не затираем, подсвечиваем CC
-                    ПодсветитьДиапазон cc.Range, True
-                    Добавить problems, addr & " — " & reason
-            End Select
+            ' Выбрать лист: по умолчанию или указанный в метке
+            If Len(sheetName) = 0 Then
+                Set ws = defaultWs
+            Else
+                Set ws = НайтиЛист(wb, sheetName)
+            End If
+
+            If ws Is Nothing Then
+                ' Указанный в метке лист не найден в книге
+                ПодсветитьДиапазон cc.Range, True
+                Добавить problems, ref & " — лист «" & sheetName & "» не найден"
+            Else
+                code = ПрочитатьЯчейку(ws, addr, val, reason)
+                Select Case code
+                    Case 0
+                        ' Успех — подставить значение, снять подсветку
+                        cc.Range.Text = val
+                        ПодсветитьДиапазон cc.Range, False
+                        updated = updated + 1
+                    Case Else
+                        ' Проблема — значение не затираем, подсвечиваем CC
+                        ПодсветитьДиапазон cc.Range, True
+                        Добавить problems, ref & " — " & reason
+                End Select
+            End If
         End If
     Next cc
 
     ПройтиПоCC = updated
 End Function
+
+' ---------------------------------------------------------------------
+'  Разобрать ссылку «Лист!Адрес» на имя листа и адрес.
+'  Без «!» — лист пустой (значит, лист по умолчанию).
+' ---------------------------------------------------------------------
+Private Sub РазобратьСсылку(ByVal s As String, ByRef sheetName As String, _
+                            ByRef addr As String)
+    Dim p As Long
+    p = InStr(s, "!")
+    If p > 0 Then
+        sheetName = Trim$(Left$(s, p - 1))
+        addr = Trim$(Mid$(s, p + 1))
+    Else
+        sheetName = ""
+        addr = Trim$(s)
+    End If
+End Sub
 
 ' ---------------------------------------------------------------------
 '  Чтение одной ячейки. Возврат: 0 — успех, иначе код проблемы.

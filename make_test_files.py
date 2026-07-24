@@ -76,6 +76,10 @@ def make_xlsx():
     ws.column_dimensions["A"].width = 22
     ws.column_dimensions["B"].width = 28
 
+    # Второй лист — для проверки меток с указанием листа {Лист2!A1}
+    ws2 = wb.create_sheet("Лист2")
+    ws2["A1"] = "Значение со второго листа"
+
     os.makedirs(OUT_DIR, exist_ok=True)
     wb.save(XLSX_PATH)
     print("Создан:", XLSX_PATH)
@@ -102,6 +106,9 @@ def make_docx():
     ]
     for name, mark in rows:
         doc.add_paragraph("{}: {}".format(name, mark))
+
+    # Метка с указанием другого листа
+    doc.add_paragraph("Значение с другого листа: {Лист2!A1}")
 
     doc.add_paragraph("")
     doc.add_paragraph("Ошибочные метки (должны попасть в список проблем):")
