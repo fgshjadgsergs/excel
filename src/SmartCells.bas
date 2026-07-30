@@ -1,30 +1,30 @@
 Attribute VB_Name = "SmartCells"
 ' =====================================================================
-'  SmartCells вЂ” РїРѕРґСЃС‚Р°РЅРѕРІРєР° Р·РЅР°С‡РµРЅРёР№ СЏС‡РµРµРє Excel РІ С‚РµРєСЃС‚ РґРѕРєСѓРјРµРЅС‚Р° Word
-'  РћСЃРЅРѕРІРЅРѕР№ РјРѕРґСѓР»СЊ: РєРѕРјР°РЅРґС‹, СЂР°Р·Р±РѕСЂ РјРµС‚РѕРє, СЂР°Р±РѕС‚Р° СЃ Excel, СЃРІРѕРґРєР°.
-'  РњРµС…Р°РЅРёРєР°: РјРµС‚РєРё {Р°РґСЂРµСЃ} РїСЂРµРІСЂР°С‰Р°СЋС‚СЃСЏ РІ Content Control СЃ С‚РµРіРѕРј
-'  "XL:Р°РґСЂРµСЃ"; РїРѕРІС‚РѕСЂРЅРѕРµ РѕР±РЅРѕРІР»РµРЅРёРµ РёРґС‘С‚ РїРѕ СЌС‚РёРј CC.
+'  SmartCells — подстановка значений ячеек Excel в текст документа Word
+'  Основной модуль: команды, разбор меток, работа с Excel, сводка.
+'  Механика: метки {адрес} превращаются в Content Control с тегом
+'  "XL:адрес"; повторное обновление идёт по этим CC.
 ' =====================================================================
 Option Explicit
 
-' --- Р Р°Р·РґРµР» СЂРµРµСЃС‚СЂР° Рё РєР»СЋС‡Рё РЅР°СЃС‚СЂРѕРµРє ---
+' --- Раздел реестра и ключи настроек ---
 Private Const REG_APP As String = "NODA_SmartCells"
 Private Const REG_SECTION As String = "Settings"
 Private Const KEY_PATH As String = "ExcelPath"
 Private Const KEY_SHEET As String = "SheetName"
 
-' --- РџР°СЂР°РјРµС‚СЂС‹ Content Control ---
-Private Const TAG_PREFIX As String = "XL:"     ' РїСЂРµС„РёРєСЃ С‚РµРіР° РјРµС‚РєРё-CC
+' --- Параметры Content Control ---
+Private Const TAG_PREFIX As String = "XL:"     ' префикс тега метки-CC
 Private Const CC_TITLE As String = "SmartCells"
 
-' --- Р¦РІРµС‚Р° Р·Р°Р»РёРІРєРё (РєРѕРЅСЃС‚Р°РЅС‚С‹ Word) ---
+' --- Цвета заливки (константы Word) ---
 Private Const CLR_YELLOW As Long = 65535           ' wdColorYellow
-Private Const CLR_AUTO As Long = -16777216         ' wdColorAutomatic (Р±РµР· Р·Р°Р»РёРІРєРё)
+Private Const CLR_AUTO As Long = -16777216         ' wdColorAutomatic (без заливки)
 
 ' =====================================================================
-'  Р“Р›РђР’РќРђРЇ РљРћРњРђРќР”Рђ: РѕР±РЅРѕРІРёС‚СЊ РІСЃРµ Р·РЅР°С‡РµРЅРёСЏ РІ РґРѕРєСѓРјРµРЅС‚Рµ
+'  ГЛАВНАЯ КОМАНДА: обновить все значения в документе
 ' =====================================================================
-Public Sub РћР±РЅРѕРІРёС‚СЊР”Р°РЅРЅС‹Рµ()
+Public Sub ОбновитьДанные()
     Dim sPath As String, sSheet As String
     Dim xlApp As Object, xlWb As Object, xlWs As Object
     Dim doc As Document
@@ -33,21 +33,21 @@ Public Sub РћР±РЅРѕРІРёС‚СЊР”Р°РЅРЅС‹Рµ()
     Dim problems As Collection
     Set problems = New Collection
 
-    ' 1. РџСЂРѕС‡РёС‚Р°С‚СЊ РЅР°СЃС‚СЂРѕР№РєРё, РїСЂРё РѕС‚СЃСѓС‚СЃС‚РІРёРё вЂ” РІС‹Р·РІР°С‚СЊ РґРёР°Р»РѕРі
-    If Not РџСЂРѕС‡РёС‚Р°С‚СЊРќР°СЃС‚СЂРѕР№РєРё(sPath, sSheet) Then
-        РќР°СЃС‚СЂРѕР№РєРёSmartCells
-        If Not РџСЂРѕС‡РёС‚Р°С‚СЊРќР°СЃС‚СЂРѕР№РєРё(sPath, sSheet) Then
-            MsgBox "РќР°СЃС‚СЂРѕР№РєРё РЅРµ Р·Р°РґР°РЅС‹. РћР±РЅРѕРІР»РµРЅРёРµ РѕС‚РјРµРЅРµРЅРѕ.", _
+    ' 1. Прочитать настройки, при отсутствии — вызвать диалог
+    If Not ПрочитатьНастройки(sPath, sSheet) Then
+        НастройкиSmartCells
+        If Not ПрочитатьНастройки(sPath, sSheet) Then
+            MsgBox "Настройки не заданы. Обновление отменено.", _
                    vbExclamation, "SmartCells"
             Exit Sub
         End If
     End If
 
-    ' 2. РџСЂРѕРІРµСЂРёС‚СЊ РЅР°Р»РёС‡РёРµ С„Р°Р№Р»Р° Excel вЂ” РµСЃР»Рё РЅРµС‚, РґРѕРєСѓРјРµРЅС‚ РЅРµ С‚СЂРѕРіР°РµРј РІРѕРѕР±С‰Рµ
+    ' 2. Проверить наличие файла Excel — если нет, документ не трогаем вообще
     If Len(Dir(sPath)) = 0 Then
-        MsgBox "Р¤Р°Р№Р» Excel РЅРµ РЅР°Р№РґРµРЅ РїРѕ РїСѓС‚Рё:" & vbCrLf & vbCrLf & _
+        MsgBox "Файл Excel не найден по пути:" & vbCrLf & vbCrLf & _
                sPath & vbCrLf & vbCrLf & _
-               "РџСЂРѕРІРµСЂСЊС‚Рµ РїСѓС‚СЊ С‡РµСЂРµР· РєРѕРјР°РЅРґСѓ В«РќР°СЃС‚СЂРѕР№РєРёSmartCellsВ».", _
+               "Проверьте путь через команду «НастройкиSmartCells».", _
                vbExclamation, "SmartCells"
         Exit Sub
     End If
@@ -55,33 +55,33 @@ Public Sub РћР±РЅРѕРІРёС‚СЊР”Р°РЅРЅС‹Рµ()
     Set doc = ActiveDocument
     Application.ScreenUpdating = False
 
-    ' 3. РћС‚РєСЂС‹С‚СЊ Excel РѕРґРёРЅ СЂР°Р· РЅР° РІРµСЃСЊ РїСЂРѕС…РѕРґ (late binding, ReadOnly, РЅРµРІРёРґРёРјРѕ)
+    ' 3. Открыть Excel один раз на весь проход (late binding, ReadOnly, невидимо)
     On Error GoTo Fail
     Set xlApp = CreateObject("Excel.Application")
     xlApp.Visible = False
     xlApp.DisplayAlerts = False
     Set xlWb = xlApp.Workbooks.Open(FileName:=sPath, ReadOnly:=True, AddToMru:=False)
 
-    ' РќР°Р№С‚Рё РЅСѓР¶РЅС‹Р№ Р»РёСЃС‚; РµСЃР»Рё Р»РёСЃС‚Р° РЅРµС‚ вЂ” РґРѕРєСѓРјРµРЅС‚ РЅРµ РјРµРЅСЏРµРј
-    Set xlWs = РќР°Р№С‚РёР›РёСЃС‚(xlWb, sSheet)
+    ' Найти нужный лист; если листа нет — документ не меняем
+    Set xlWs = НайтиЛист(xlWb, sSheet)
     If xlWs Is Nothing Then
-        MsgBox "Р›РёСЃС‚ В«" & sSheet & "В» РЅРµ РЅР°Р№РґРµРЅ РІ РєРЅРёРіРµ:" & vbCrLf & _
+        MsgBox "Лист «" & sSheet & "» не найден в книге:" & vbCrLf & _
                sPath & vbCrLf & vbCrLf & _
-               "РџСЂРѕРІРµСЂСЊС‚Рµ РёРјСЏ Р»РёСЃС‚Р° С‡РµСЂРµР· В«РќР°СЃС‚СЂРѕР№РєРёSmartCellsВ».", _
+               "Проверьте имя листа через «НастройкиSmartCells».", _
                vbExclamation, "SmartCells"
         aborted = True
         GoTo CleanUp
     End If
 
-    ' 4. РџСЂРѕС…РѕРґ (Р°): С‚РµРєСЃС‚ {Р°РґСЂРµСЃ} -> Content Control (РїСЂРѕР±Р»РµРјРЅС‹Рµ РјРµС‚РєРё РїРѕРґСЃРІРµС‚РёС‚СЊ)
-    РџСЂРѕР№С‚РёРџРѕРўРµРєСЃС‚Сѓ doc, problems
+    ' 4. Проход (а): текст {адрес} -> Content Control (проблемные метки подсветить)
+    ПройтиПоТексту doc, problems
 
-    ' 5. РџСЂРѕС…РѕРґ (Р±): РїРµСЂРµС‡РёС‚Р°С‚СЊ Р·РЅР°С‡РµРЅРёСЏ РІСЃРµС… CC XL:* РёР· Excel
-    '    (Р»РёСЃС‚ РїРѕ СѓРјРѕР»С‡Р°РЅРёСЋ вЂ” xlWs; РјРµС‚РєРё {Р›РёСЃС‚!A5} С‡РёС‚Р°СЋС‚СЃСЏ РёР· СЃРІРѕРёС… Р»РёСЃС‚РѕРІ)
-    updated = РџСЂРѕР№С‚РёРџРѕCC(doc, xlWb, xlWs, problems)
+    ' 5. Проход (б): перечитать значения всех CC XL:* из Excel
+    '    (лист по умолчанию — xlWs; метки {Лист!A5} читаются из своих листов)
+    updated = ПройтиПоCC(doc, xlWb, xlWs, problems)
 
 CleanUp:
-    ' --- Р“Р°СЂР°РЅС‚РёСЂРѕРІР°РЅРЅРѕРµ Р·Р°РєСЂС‹С‚РёРµ Excel Рё РѕСЃРІРѕР±РѕР¶РґРµРЅРёРµ РѕР±СЉРµРєС‚РѕРІ ---
+    ' --- Гарантированное закрытие Excel и освобождение объектов ---
     On Error Resume Next
     If Not xlWb Is Nothing Then xlWb.Close SaveChanges:=False
     If Not xlApp Is Nothing Then xlApp.Quit
@@ -91,24 +91,24 @@ CleanUp:
     Application.ScreenUpdating = True
     On Error GoTo 0
 
-    ' 6. РС‚РѕРіРѕРІР°СЏ СЃРІРѕРґРєР° (РЅРµ РїРѕРєР°Р·С‹РІР°РµРј, РµСЃР»Рё РїСЂРѕС…РѕРґ РїСЂРµСЂРІР°РЅ РґРѕ РЅР°С‡Р°Р»Р°)
-    If Not aborted Then РџРѕРєР°Р·Р°С‚СЊРЎРІРѕРґРєСѓ updated, problems
+    ' 6. Итоговая сводка (не показываем, если проход прерван до начала)
+    If Not aborted Then ПоказатьСводку updated, problems
     Exit Sub
 
 Fail:
     Dim sErr As String
     sErr = Err.Description
-    MsgBox "РћС€РёР±РєР° РїСЂРё РѕР±РЅРѕРІР»РµРЅРёРё РґР°РЅРЅС‹С…:" & vbCrLf & sErr, _
+    MsgBox "Ошибка при обновлении данных:" & vbCrLf & sErr, _
            vbCritical, "SmartCells"
     Resume CleanUp
 End Sub
 
 ' ---------------------------------------------------------------------
-'  РџСЂРѕС…РѕРґ (Р°): РїРѕРёСЃРє РјРµС‚РѕРє {Р°РґСЂРµСЃ} РёР»Рё {Р›РёСЃС‚!Р°РґСЂРµСЃ} Рё РїСЂРµРІСЂР°С‰РµРЅРёРµ РёС… РІ CC.
-'  РџСЂРѕР±Р»РµРјРЅС‹Рµ РјРµС‚РєРё (РєРёСЂРёР»Р»РёС†Р° РІ Р°РґСЂРµСЃРµ, РЅРµРєРѕСЂСЂРµРєС‚РЅС‹Р№ Р°РґСЂРµСЃ) вЂ” РїРѕРґСЃРІРµС‚РёС‚СЊ
-'  Рё РІРєР»СЋС‡РёС‚СЊ РІ СЃРїРёСЃРѕРє, С‚РµРєСЃС‚ РЅРµ С‚СЂРѕРіР°С‚СЊ.
+'  Проход (а): поиск меток {адрес} или {Лист!адрес} и превращение их в CC.
+'  Проблемные метки (кириллица в адресе, некорректный адрес) — подсветить
+'  и включить в список, текст не трогать.
 ' ---------------------------------------------------------------------
-Private Sub РџСЂРѕР№С‚РёРџРѕРўРµРєСЃС‚Сѓ(ByVal doc As Document, ByVal problems As Collection)
+Private Sub ПройтиПоТексту(ByVal doc As Document, ByVal problems As Collection)
     Dim rng As Range
     Dim inner As String, sheetName As String, addr As String, ref As String
     Dim cc As ContentControl
@@ -121,24 +121,24 @@ Private Sub РџСЂРѕР№С‚РёРџРѕРўРµРєСЃС‚Сѓ(ByVal doc As Document, ByVal problems A
         .Wrap = wdFindStop
         .Format = False
         .MatchWildcards = True
-        ' {  +  1 Рё Р±РѕР»РµРµ Р±СѓРєРІ/С†РёС„СЂ/РїСЂРѕР±РµР»РѕРІ/В«!В»/В«_В» (Р»Р°С‚./РєРёСЂ.)  +  }
-        ' РґРѕРїСѓСЃРєР°РµС‚СЃСЏ РЅРµРѕР±СЏР·Р°С‚РµР»СЊРЅРѕРµ РёРјСЏ Р»РёСЃС‚Р° РїРµСЂРµРґ В«!В»: {Р›РёСЃС‚!A5}
-        .Text = "\{[0-9A-Za-zРђ-РЇР°-СЏРЃС‘ !_]@\}"
+        ' {  +  1 и более букв/цифр/пробелов/«!»/«_» (лат./кир.)  +  }
+        ' допускается необязательное имя листа перед «!»: {Лист!A5}
+        .Text = "\{[0-9A-Za-zА-Яа-яЁё !_]@\}"
 
         Do While .Execute
-            ' rng СѓРєР°Р·С‹РІР°РµС‚ РЅР° РЅР°Р№РґРµРЅРЅСѓСЋ РјРµС‚РєСѓ РІРёРґР° {A5} РёР»Рё {Р›РёСЃС‚!A5}
-            inner = Mid$(rng.Text, 2, Len(rng.Text) - 2)   ' СЃРѕРґРµСЂР¶РёРјРѕРµ Р±РµР· СЃРєРѕР±РѕРє
-            Р Р°Р·РѕР±СЂР°С‚СЊРЎСЃС‹Р»РєСѓ inner, sheetName, addr
+            ' rng указывает на найденную метку вида {A5} или {Лист!A5}
+            inner = Mid$(rng.Text, 2, Len(rng.Text) - 2)   ' содержимое без скобок
+            РазобратьСсылку inner, sheetName, addr
 
-            If РЎРѕРґРµСЂР¶РёС‚РљРёСЂРёР»Р»РёС†Сѓ(addr) Then
-                ' Р СѓСЃСЃРєРёРµ Р±СѓРєРІС‹ РІ РђР”Р Р•РЎР• вЂ” С‡Р°СЃС‚Р°СЏ РѕС€РёР±РєР° (РёРјСЏ Р»РёСЃС‚Р° РјРѕР¶РµС‚ Р±С‹С‚СЊ СЂСѓСЃСЃРєРёРј)
-                РџРѕРґСЃРІРµС‚РёС‚СЊР”РёР°РїР°Р·РѕРЅ rng, True
-                Р”РѕР±Р°РІРёС‚СЊ problems, inner & " вЂ” Р°РґСЂРµСЃ РЅР°Р±СЂР°РЅ СЂСѓСЃСЃРєРёРјРё Р±СѓРєРІР°РјРё"
+            If СодержитКириллицу(addr) Then
+                ' Русские буквы в АДРЕСЕ — частая ошибка (имя листа может быть русским)
+                ПодсветитьДиапазон rng, True
+                Добавить problems, inner & " — адрес набран русскими буквами"
                 rng.Collapse wdCollapseEnd
 
-            ElseIf РљРѕСЂСЂРµРєС‚РЅС‹Р№РђРґСЂРµСЃ(addr) Then
-                ' РљРѕСЂСЂРµРєС‚РЅР°СЏ РјРµС‚РєР° вЂ” РїСЂРµРІСЂР°С‰Р°РµРј РІ Content Control.
-                ' Р’ С‚РµРі РїРёС€РµРј Р°РґСЂРµСЃ РІ РІРµСЂС…РЅРµРј СЂРµРіРёСЃС‚СЂРµ, РёРјСЏ Р»РёСЃС‚Р° вЂ” РєР°Рє РµСЃС‚СЊ.
+            ElseIf КорректныйАдрес(addr) Then
+                ' Корректная метка — превращаем в Content Control.
+                ' В тег пишем адрес в верхнем регистре, имя листа — как есть.
                 If Len(sheetName) > 0 Then
                     ref = sheetName & "!" & UCase$(addr)
                 Else
@@ -147,28 +147,28 @@ Private Sub РџСЂРѕР№С‚РёРџРѕРўРµРєСЃС‚Сѓ(ByVal doc As Document, ByVal problems A
                 Set cc = doc.ContentControls.Add(wdContentControlText, rng)
                 cc.Tag = TAG_PREFIX & ref
                 cc.Title = CC_TITLE
-                ' Р—РЅР°С‡РµРЅРёРµ РїРѕРґСЃС‚Р°РІРёС‚ РїСЂРѕС…РѕРґ (Р±); rng С‚РµРїРµСЂСЊ вЂ” РґРёР°РїР°Р·РѕРЅ CC
+                ' Значение подставит проход (б); rng теперь — диапазон CC
                 rng.SetRange cc.Range.End, cc.Range.End
 
             Else
-                ' РќРµРєРѕСЂСЂРµРєС‚РЅС‹Р№ С„РѕСЂРјР°С‚ Р°РґСЂРµСЃР° (РЅР°РїСЂРёРјРµСЂ {5A})
-                РџРѕРґСЃРІРµС‚РёС‚СЊР”РёР°РїР°Р·РѕРЅ rng, True
-                Р”РѕР±Р°РІРёС‚СЊ problems, inner & " вЂ” РЅРµРєРѕСЂСЂРµРєС‚РЅС‹Р№ Р°РґСЂРµСЃ"
+                ' Некорректный формат адреса (например {5A})
+                ПодсветитьДиапазон rng, True
+                Добавить problems, inner & " — некорректный адрес"
                 rng.Collapse wdCollapseEnd
             End If
 
-            ' РџСЂРѕРґРѕР»Р¶РёС‚СЊ РїРѕРёСЃРє РѕС‚ С‚РµРєСѓС‰РµР№ РїРѕР·РёС†РёРё РґРѕ РєРѕРЅС†Р° РґРѕРєСѓРјРµРЅС‚Р°
+            ' Продолжить поиск от текущей позиции до конца документа
             rng.End = doc.Content.End
         Loop
     End With
 End Sub
 
 ' ---------------------------------------------------------------------
-'  РџСЂРѕС…РѕРґ (Р±): РїРµСЂРµС‡РёС‚Р°С‚СЊ Р·РЅР°С‡РµРЅРёСЏ РІСЃРµС… CC СЃ С‚РµРіРѕРј XL:* Рё РѕР±РЅРѕРІРёС‚СЊ С‚РµРєСЃС‚.
-'  Р›РёСЃС‚ РІС‹Р±РёСЂР°РµС‚СЃСЏ РїРѕ РјРµС‚РєРµ: {Р›РёСЃС‚!A5} вЂ” РёР· СѓРєР°Р·Р°РЅРЅРѕРіРѕ Р»РёСЃС‚Р° РєРЅРёРіРё,
-'  {A5} вЂ” РёР· Р»РёСЃС‚Р° РїРѕ СѓРјРѕР»С‡Р°РЅРёСЋ (РёР· РЅР°СЃС‚СЂРѕРµРє). Р’РѕР·РІСЂР°С‰Р°РµС‚ С‡РёСЃР»Рѕ РѕР±РЅРѕРІР»С‘РЅРЅС‹С….
+'  Проход (б): перечитать значения всех CC с тегом XL:* и обновить текст.
+'  Лист выбирается по метке: {Лист!A5} — из указанного листа книги,
+'  {A5} — из листа по умолчанию (из настроек). Возвращает число обновлённых.
 ' ---------------------------------------------------------------------
-Private Function РџСЂРѕР№С‚РёРџРѕCC(ByVal doc As Document, ByVal wb As Object, _
+Private Function ПройтиПоCC(ByVal doc As Document, ByVal wb As Object, _
                             ByVal defaultWs As Object, ByVal problems As Collection) As Long
     Dim cc As ContentControl
     Dim ref As String, sheetName As String, addr As String
@@ -180,44 +180,44 @@ Private Function РџСЂРѕР№С‚РёРџРѕCC(ByVal doc As Document, ByVal wb As Object, _
     For Each cc In doc.ContentControls
         If Left$(cc.Tag, Len(TAG_PREFIX)) = TAG_PREFIX Then
             ref = Mid$(cc.Tag, Len(TAG_PREFIX) + 1)
-            Р Р°Р·РѕР±СЂР°С‚СЊРЎСЃС‹Р»РєСѓ ref, sheetName, addr
+            РазобратьСсылку ref, sheetName, addr
 
-            ' Р’С‹Р±СЂР°С‚СЊ Р»РёСЃС‚: РїРѕ СѓРјРѕР»С‡Р°РЅРёСЋ РёР»Рё СѓРєР°Р·Р°РЅРЅС‹Р№ РІ РјРµС‚РєРµ
+            ' Выбрать лист: по умолчанию или указанный в метке
             If Len(sheetName) = 0 Then
                 Set ws = defaultWs
             Else
-                Set ws = РќР°Р№С‚РёР›РёСЃС‚(wb, sheetName)
+                Set ws = НайтиЛист(wb, sheetName)
             End If
 
             If ws Is Nothing Then
-                ' РЈРєР°Р·Р°РЅРЅС‹Р№ РІ РјРµС‚РєРµ Р»РёСЃС‚ РЅРµ РЅР°Р№РґРµРЅ РІ РєРЅРёРіРµ
-                РџРѕРґСЃРІРµС‚РёС‚СЊР”РёР°РїР°Р·РѕРЅ cc.Range, True
-                Р”РѕР±Р°РІРёС‚СЊ problems, ref & " вЂ” Р»РёСЃС‚ В«" & sheetName & "В» РЅРµ РЅР°Р№РґРµРЅ"
+                ' Указанный в метке лист не найден в книге
+                ПодсветитьДиапазон cc.Range, True
+                Добавить problems, ref & " — лист «" & sheetName & "» не найден"
             Else
-                code = РџСЂРѕС‡РёС‚Р°С‚СЊРЇС‡РµР№РєСѓ(ws, addr, val, reason)
+                code = ПрочитатьЯчейку(ws, addr, val, reason)
                 Select Case code
                     Case 0
-                        ' РЈСЃРїРµС… вЂ” РїРѕРґСЃС‚Р°РІРёС‚СЊ Р·РЅР°С‡РµРЅРёРµ, СЃРЅСЏС‚СЊ РїРѕРґСЃРІРµС‚РєСѓ
+                        ' Успех — подставить значение, снять подсветку
                         cc.Range.Text = val
-                        РџРѕРґСЃРІРµС‚РёС‚СЊР”РёР°РїР°Р·РѕРЅ cc.Range, False
+                        ПодсветитьДиапазон cc.Range, False
                         updated = updated + 1
                     Case Else
-                        ' РџСЂРѕР±Р»РµРјР° вЂ” Р·РЅР°С‡РµРЅРёРµ РЅРµ Р·Р°С‚РёСЂР°РµРј, РїРѕРґСЃРІРµС‡РёРІР°РµРј CC
-                        РџРѕРґСЃРІРµС‚РёС‚СЊР”РёР°РїР°Р·РѕРЅ cc.Range, True
-                        Р”РѕР±Р°РІРёС‚СЊ problems, ref & " вЂ” " & reason
+                        ' Проблема — значение не затираем, подсвечиваем CC
+                        ПодсветитьДиапазон cc.Range, True
+                        Добавить problems, ref & " — " & reason
                 End Select
             End If
         End If
     Next cc
 
-    РџСЂРѕР№С‚РёРџРѕCC = updated
+    ПройтиПоCC = updated
 End Function
 
 ' ---------------------------------------------------------------------
-'  Р Р°Р·РѕР±СЂР°С‚СЊ СЃСЃС‹Р»РєСѓ В«Р›РёСЃС‚!РђРґСЂРµСЃВ» РЅР° РёРјСЏ Р»РёСЃС‚Р° Рё Р°РґСЂРµСЃ.
-'  Р‘РµР· В«!В» вЂ” Р»РёСЃС‚ РїСѓСЃС‚РѕР№ (Р·РЅР°С‡РёС‚, Р»РёСЃС‚ РїРѕ СѓРјРѕР»С‡Р°РЅРёСЋ).
+'  Разобрать ссылку «Лист!Адрес» на имя листа и адрес.
+'  Без «!» — лист пустой (значит, лист по умолчанию).
 ' ---------------------------------------------------------------------
-Private Sub Р Р°Р·РѕР±СЂР°С‚СЊРЎСЃС‹Р»РєСѓ(ByVal s As String, ByRef sheetName As String, _
+Private Sub РазобратьСсылку(ByVal s As String, ByRef sheetName As String, _
                             ByRef addr As String)
     Dim p As Long
     p = InStr(s, "!")
@@ -231,97 +231,97 @@ Private Sub Р Р°Р·РѕР±СЂР°С‚СЊРЎСЃС‹Р»РєСѓ(ByVal s As String, ByRef sheetName As
 End Sub
 
 ' ---------------------------------------------------------------------
-'  Р§С‚РµРЅРёРµ РѕРґРЅРѕР№ СЏС‡РµР№РєРё. Р’РѕР·РІСЂР°С‚: 0 вЂ” СѓСЃРїРµС…, РёРЅР°С‡Рµ РєРѕРґ РїСЂРѕР±Р»РµРјС‹.
-'  out  вЂ” РїРѕРґСЃС‚Р°РІР»СЏРµРјРѕРµ Р·РЅР°С‡РµРЅРёРµ (РїСЂРё code=0)
-'  reason вЂ” РїСЂРёС‡РёРЅР° РїСЂРѕР±Р»РµРјС‹ (РїСЂРё code<>0)
+'  Чтение одной ячейки. Возврат: 0 — успех, иначе код проблемы.
+'  out  — подставляемое значение (при code=0)
+'  reason — причина проблемы (при code<>0)
 ' ---------------------------------------------------------------------
-Private Function РџСЂРѕС‡РёС‚Р°С‚СЊРЇС‡РµР№РєСѓ(ByVal ws As Object, ByVal addr As String, _
+Private Function ПрочитатьЯчейку(ByVal ws As Object, ByVal addr As String, _
                                  ByRef out As String, ByRef reason As String) As Long
     Dim rng As Object
     Dim t As String
 
     On Error GoTo BadAddr
-    Set rng = ws.Range(addr)        ' РЅРµРєРѕСЂСЂРµРєС‚РЅС‹Р№/РІРЅРµ СЃРµС‚РєРё Р°РґСЂРµСЃ -> РѕС€РёР±РєР°
+    Set rng = ws.Range(addr)        ' некорректный/вне сетки адрес -> ошибка
     On Error GoTo 0
 
-    ' РЇС‡РµР№РєР° СЃ РѕС€РёР±РєРѕР№ Excel (#Р”Р•Р›/0! Рё С‚.Рї.)
+    ' Ячейка с ошибкой Excel (#ДЕЛ/0! и т.п.)
     If IsError(rng.Value2) Then
-        reason = "РѕС€РёР±РєР° РІ СЏС‡РµР№РєРµ (" & CStr(rng.Text) & ")"
-        РџСЂРѕС‡РёС‚Р°С‚СЊРЇС‡РµР№РєСѓ = 1
+        reason = "ошибка в ячейке (" & CStr(rng.Text) & ")"
+        ПрочитатьЯчейку = 1
         Exit Function
     End If
 
-    ' Р—РЅР°С‡РµРЅРёРµ вЂ” РєР°Рє РІРёРґРёС‚ РїРѕР»СЊР·РѕРІР°С‚РµР»СЊ; РїСЂРё СѓР·РєРѕР№ РєРѕР»РѕРЅРєРµ (####) вЂ” РёР· Value2
+    ' Значение — как видит пользователь; при узкой колонке (####) — из Value2
     t = CStr(rng.Text)
-    If Len(t) > 0 And РўРѕР»СЊРєРѕР РµС€С‘С‚РєРё(t) Then t = CStr(rng.Value2)
+    If Len(t) > 0 And ТолькоРешётки(t) Then t = CStr(rng.Value2)
 
-    ' РџСѓСЃС‚Р°СЏ СЏС‡РµР№РєР° вЂ” РїСѓСЃС‚СѓСЋ СЃС‚СЂРѕРєСѓ РЅРµ РїРѕРґСЃС‚Р°РІР»СЏРµРј
+    ' Пустая ячейка — пустую строку не подставляем
     If IsEmpty(rng.Value2) Or Len(t) = 0 Then
-        reason = "РїСѓСЃС‚Р°СЏ СЏС‡РµР№РєР°"
-        РџСЂРѕС‡РёС‚Р°С‚СЊРЇС‡РµР№РєСѓ = 2
+        reason = "пустая ячейка"
+        ПрочитатьЯчейку = 2
         Exit Function
     End If
 
     out = t
-    РџСЂРѕС‡РёС‚Р°С‚СЊРЇС‡РµР№РєСѓ = 0
+    ПрочитатьЯчейку = 0
     Exit Function
 
 BadAddr:
-    reason = "РЅРµРєРѕСЂСЂРµРєС‚РЅС‹Р№ Р°РґСЂРµСЃ РёР»Рё Р°РґСЂРµСЃ РІРЅРµ Р»РёСЃС‚Р°"
-    РџСЂРѕС‡РёС‚Р°С‚СЊРЇС‡РµР№РєСѓ = 3
+    reason = "некорректный адрес или адрес вне листа"
+    ПрочитатьЯчейку = 3
 End Function
 
 ' =====================================================================
-'  РљРћРњРђРќР”Рђ: РЅР°СЃС‚СЂРѕР№РєРё (РїСѓС‚СЊ Рє С„Р°Р№Р»Сѓ Excel Рё РёРјСЏ Р»РёСЃС‚Р°) -> СЂРµРµСЃС‚СЂ
+'  КОМАНДА: настройки (путь к файлу Excel и имя листа) -> реестр
 ' =====================================================================
-Public Sub РќР°СЃС‚СЂРѕР№РєРёSmartCells()
+Public Sub НастройкиSmartCells()
     Dim sPath As String, sSheet As String
     Dim curPath As String, curSheet As String
 
-    РџСЂРѕС‡РёС‚Р°С‚СЊРќР°СЃС‚СЂРѕР№РєРё curPath, curSheet   ' С‚РµРєСѓС‰РёРµ Р·РЅР°С‡РµРЅРёСЏ РєР°Рє РїРѕРґСЃРєР°Р·РєР°
+    ПрочитатьНастройки curPath, curSheet   ' текущие значения как подсказка
 
-    ' РЁР°Рі 1. РџСѓС‚СЊ Рє С„Р°Р№Р»Сѓ
-    sPath = Trim$(InputBox("РџРѕР»РЅС‹Р№ РїСѓС‚СЊ Рє С„Р°Р№Р»Сѓ Excel (.xlsx):", _
-                           "SmartCells вЂ” РЅР°СЃС‚СЂРѕР№РєРё (1/2)", curPath))
-    If Len(sPath) = 0 Then Exit Sub        ' РїРѕР»СЊР·РѕРІР°С‚РµР»СЊ РѕС‚РјРµРЅРёР»
+    ' Шаг 1. Путь к файлу
+    sPath = Trim$(InputBox("Полный путь к файлу Excel (.xlsx):", _
+                           "SmartCells — настройки (1/2)", curPath))
+    If Len(sPath) = 0 Then Exit Sub        ' пользователь отменил
     If Len(Dir(sPath)) = 0 Then
-        MsgBox "Р¤Р°Р№Р» РЅРµ РЅР°Р№РґРµРЅ РїРѕ СѓРєР°Р·Р°РЅРЅРѕРјСѓ РїСѓС‚Рё:" & vbCrLf & sPath, _
+        MsgBox "Файл не найден по указанному пути:" & vbCrLf & sPath, _
                vbExclamation, "SmartCells"
         Exit Sub
     End If
 
-    ' РЁР°Рі 2. РРјСЏ Р»РёСЃС‚Р°
-    sSheet = Trim$(InputBox("РРјСЏ Р»РёСЃС‚Р° РІ РєРЅРёРіРµ:", _
-                            "SmartCells вЂ” РЅР°СЃС‚СЂРѕР№РєРё (2/2)", curSheet))
+    ' Шаг 2. Имя листа
+    sSheet = Trim$(InputBox("Имя листа в книге:", _
+                            "SmartCells — настройки (2/2)", curSheet))
     If Len(sSheet) = 0 Then Exit Sub
 
-    If Not Р›РёСЃС‚РЎСѓС‰РµСЃС‚РІСѓРµС‚(sPath, sSheet) Then
-        MsgBox "Р›РёСЃС‚ В«" & sSheet & "В» РЅРµ РЅР°Р№РґРµРЅ РІ РєРЅРёРіРµ:" & vbCrLf & sPath, _
+    If Not ЛистСуществует(sPath, sSheet) Then
+        MsgBox "Лист «" & sSheet & "» не найден в книге:" & vbCrLf & sPath, _
                vbExclamation, "SmartCells"
         Exit Sub
     End If
 
-    ' РЎРѕС…СЂР°РЅРёС‚СЊ РІ СЂРµРµСЃС‚СЂ
+    ' Сохранить в реестр
     SaveSetting REG_APP, REG_SECTION, KEY_PATH, sPath
     SaveSetting REG_APP, REG_SECTION, KEY_SHEET, sSheet
 
-    MsgBox "РќР°СЃС‚СЂРѕР№РєРё СЃРѕС…СЂР°РЅРµРЅС‹:" & vbCrLf & vbCrLf & _
-           "Р¤Р°Р№Р»: " & sPath & vbCrLf & _
-           "Р›РёСЃС‚: " & sSheet, vbInformation, "SmartCells"
+    MsgBox "Настройки сохранены:" & vbCrLf & vbCrLf & _
+           "Файл: " & sPath & vbCrLf & _
+           "Лист: " & sSheet, vbInformation, "SmartCells"
 End Sub
 
 ' =====================================================================
-'  РљРћРњРђРќР”Рђ: СѓР±СЂР°С‚СЊ СЃРІСЏР·СЊ вЂ” Р·Р°РјРµРЅРёС‚СЊ CC РЅР° С‚РµРєСѓС‰РёР№ С‚РµРєСЃС‚ (СЃРЅСЏС‚СЊ РєРѕРЅС‚СЂРѕР»С‹)
+'  КОМАНДА: убрать связь — заменить CC на текущий текст (снять контролы)
 ' =====================================================================
-Public Sub РЈР±СЂР°С‚СЊРЎРІСЏР·СЊSmartCells()
+Public Sub УбратьСвязьSmartCells()
     Dim ans As VbMsgBoxResult
     Dim scope As Range
     Dim cc As ContentControl
     Dim i As Long
     Dim removed As Long
 
-    ans = MsgBox("РЎРЅСЏС‚СЊ СЃРІСЏР·СЊ РїРѕ РІСЃРµРјСѓ РґРѕРєСѓРјРµРЅС‚Сѓ?" & vbCrLf & vbCrLf & _
-                 "Р”Р° вЂ” РІРµСЃСЊ РґРѕРєСѓРјРµРЅС‚; РќРµС‚ вЂ” С‚РѕР»СЊРєРѕ РІС‹РґРµР»РµРЅРёРµ.", _
+    ans = MsgBox("Снять связь по всему документу?" & vbCrLf & vbCrLf & _
+                 "Да — весь документ; Нет — только выделение.", _
                  vbQuestion + vbYesNoCancel, "SmartCells")
     If ans = vbCancel Then Exit Sub
 
@@ -331,45 +331,45 @@ Public Sub РЈР±СЂР°С‚СЊРЎРІСЏР·СЊSmartCells()
         Set scope = Selection.Range
     End If
 
-    ' РРґС‘Рј СЃ РєРѕРЅС†Р° Рє РЅР°С‡Р°Р»Сѓ, С‡С‚РѕР±С‹ СѓРґР°Р»РµРЅРёРµ РЅРµ СЃР±РёРІР°Р»Рѕ РЅСѓРјРµСЂР°С†РёСЋ
+    ' Идём с конца к началу, чтобы удаление не сбивало нумерацию
     For i = scope.ContentControls.Count To 1 Step -1
         Set cc = scope.ContentControls(i)
         If Left$(cc.Tag, Len(TAG_PREFIX)) = TAG_PREFIX Then
-            cc.Delete False        ' СѓР±СЂР°С‚СЊ РєРѕРЅС‚СЂРѕР», РѕСЃС‚Р°РІРёС‚СЊ С‚РµРєСЃС‚
+            cc.Delete False        ' убрать контрол, оставить текст
             removed = removed + 1
         End If
     Next i
 
-    MsgBox "РЎРІСЏР·СЊ СЃРЅСЏС‚Р°. РћР±СЂР°Р±РѕС‚Р°РЅРѕ РјРµС‚РѕРє: " & removed, _
+    MsgBox "Связь снята. Обработано меток: " & removed, _
            vbInformation, "SmartCells"
 End Sub
 
 ' =====================================================================
-'  Р’РЎРџРћРњРћР“РђРўР•Р›Р¬РќР«Р• РџР РћР¦Р•Р”РЈР Р«
+'  ВСПОМОГАТЕЛЬНЫЕ ПРОЦЕДУРЫ
 ' =====================================================================
 
-' РџСЂРѕС‡РёС‚Р°С‚СЊ РЅР°СЃС‚СЂРѕР№РєРё РёР· СЂРµРµСЃС‚СЂР°. True, РµСЃР»Рё РѕР±Р° Р·РЅР°С‡РµРЅРёСЏ Р·Р°РґР°РЅС‹.
-Private Function РџСЂРѕС‡РёС‚Р°С‚СЊРќР°СЃС‚СЂРѕР№РєРё(ByRef sPath As String, _
+' Прочитать настройки из реестра. True, если оба значения заданы.
+Private Function ПрочитатьНастройки(ByRef sPath As String, _
                                     ByRef sSheet As String) As Boolean
     sPath = GetSetting(REG_APP, REG_SECTION, KEY_PATH, "")
     sSheet = GetSetting(REG_APP, REG_SECTION, KEY_SHEET, "")
-    РџСЂРѕС‡РёС‚Р°С‚СЊРќР°СЃС‚СЂРѕР№РєРё = (Len(sPath) > 0 And Len(sSheet) > 0)
+    ПрочитатьНастройки = (Len(sPath) > 0 And Len(sSheet) > 0)
 End Function
 
-' РќР°Р№С‚Рё Р»РёСЃС‚ РІ СѓР¶Рµ РѕС‚РєСЂС‹С‚РѕР№ РєРЅРёРіРµ РїРѕ РёРјРµРЅРё (Nothing, РµСЃР»Рё РЅРµС‚).
-Private Function РќР°Р№С‚РёР›РёСЃС‚(ByVal wb As Object, ByVal sSheet As String) As Object
+' Найти лист в уже открытой книге по имени (Nothing, если нет).
+Private Function НайтиЛист(ByVal wb As Object, ByVal sSheet As String) As Object
     Dim ws As Object
     For Each ws In wb.Worksheets
         If StrComp(ws.Name, sSheet, vbTextCompare) = 0 Then
-            Set РќР°Р№С‚РёР›РёСЃС‚ = ws
+            Set НайтиЛист = ws
             Exit Function
         End If
     Next ws
-    Set РќР°Р№С‚РёР›РёСЃС‚ = Nothing
+    Set НайтиЛист = Nothing
 End Function
 
-' РџСЂРѕРІРµСЂРёС‚СЊ РЅР°Р»РёС‡РёРµ Р»РёСЃС‚Р° РІ РєРЅРёРіРµ (РѕС‚РєСЂС‹С‚СЊ РЅР° С‡С‚РµРЅРёРµ Рё Р·Р°РєСЂС‹С‚СЊ).
-Private Function Р›РёСЃС‚РЎСѓС‰РµСЃС‚РІСѓРµС‚(ByVal sPath As String, _
+' Проверить наличие листа в книге (открыть на чтение и закрыть).
+Private Function ЛистСуществует(ByVal sPath As String, _
                                 ByVal sSheet As String) As Boolean
     Dim xlApp As Object, xlWb As Object, ws As Object
     On Error GoTo Done
@@ -377,8 +377,8 @@ Private Function Р›РёСЃС‚РЎСѓС‰РµСЃС‚РІСѓРµС‚(ByVal sPath As String, _
     xlApp.Visible = False
     xlApp.DisplayAlerts = False
     Set xlWb = xlApp.Workbooks.Open(FileName:=sPath, ReadOnly:=True, AddToMru:=False)
-    Set ws = РќР°Р№С‚РёР›РёСЃС‚(xlWb, sSheet)
-    Р›РёСЃС‚РЎСѓС‰РµСЃС‚РІСѓРµС‚ = Not (ws Is Nothing)
+    Set ws = НайтиЛист(xlWb, sSheet)
+    ЛистСуществует = Not (ws Is Nothing)
 Done:
     On Error Resume Next
     If Not xlWb Is Nothing Then xlWb.Close SaveChanges:=False
@@ -386,8 +386,8 @@ Done:
     Set ws = Nothing: Set xlWb = Nothing: Set xlApp = Nothing
 End Function
 
-' РџСЂРѕРІРµСЂРєР° РєРѕСЂСЂРµРєС‚РЅРѕРіРѕ Р°РґСЂРµСЃР°: 1вЂ“3 Р»Р°С‚РёРЅСЃРєРёРµ Р±СѓРєРІС‹ + 1вЂ“7 С†РёС„СЂ.
-Private Function РљРѕСЂСЂРµРєС‚РЅС‹Р№РђРґСЂРµСЃ(ByVal s As String) As Boolean
+' Проверка корректного адреса: 1–3 латинские буквы + 1–7 цифр.
+Private Function КорректныйАдрес(ByVal s As String) As Boolean
     Static re As Object
     If re Is Nothing Then
         Set re = CreateObject("VBScript.RegExp")
@@ -395,31 +395,31 @@ Private Function РљРѕСЂСЂРµРєС‚РЅС‹Р№РђРґСЂРµСЃ(ByVal s As String) As Boolean
         re.IgnoreCase = True
         re.Global = False
     End If
-    РљРѕСЂСЂРµРєС‚РЅС‹Р№РђРґСЂРµСЃ = re.Test(s)
+    КорректныйАдрес = re.Test(s)
 End Function
 
-' Р•СЃС‚СЊ Р»Рё РІ СЃС‚СЂРѕРєРµ С…РѕС‚СЏ Р±С‹ РѕРґРЅР° РєРёСЂРёР»Р»РёС‡РµСЃРєР°СЏ Р±СѓРєРІР°.
-Private Function РЎРѕРґРµСЂР¶РёС‚РљРёСЂРёР»Р»РёС†Сѓ(ByVal s As String) As Boolean
+' Есть ли в строке хотя бы одна кириллическая буква.
+Private Function СодержитКириллицу(ByVal s As String) As Boolean
     Static re As Object
     If re Is Nothing Then
         Set re = CreateObject("VBScript.RegExp")
-        re.Pattern = "[Рђ-РЇР°-СЏРЃС‘]"
+        re.Pattern = "[А-Яа-яЁё]"
         re.Global = False
     End If
-    РЎРѕРґРµСЂР¶РёС‚РљРёСЂРёР»Р»РёС†Сѓ = re.Test(s)
+    СодержитКириллицу = re.Test(s)
 End Function
 
-' РЎРѕСЃС‚РѕРёС‚ Р»Рё СЃС‚СЂРѕРєР° С†РµР»РёРєРѕРј РёР· СЃРёРјРІРѕР»РѕРІ "#" (СѓР·РєР°СЏ РєРѕР»РѕРЅРєР° Excel).
-Private Function РўРѕР»СЊРєРѕР РµС€С‘С‚РєРё(ByVal s As String) As Boolean
+' Состоит ли строка целиком из символов "#" (узкая колонка Excel).
+Private Function ТолькоРешётки(ByVal s As String) As Boolean
     Dim i As Long
     For i = 1 To Len(s)
         If Mid$(s, i, 1) <> "#" Then Exit Function
     Next i
-    РўРѕР»СЊРєРѕР РµС€С‘С‚РєРё = (Len(s) > 0)
+    ТолькоРешётки = (Len(s) > 0)
 End Function
 
-' РџРѕРґСЃРІРµС‚РёС‚СЊ/СЃРЅСЏС‚СЊ Р¶С‘Р»С‚СѓСЋ Р·Р°Р»РёРІРєСѓ РґРёР°РїР°Р·РѕРЅР°.
-Private Sub РџРѕРґСЃРІРµС‚РёС‚СЊР”РёР°РїР°Р·РѕРЅ(ByVal rng As Range, ByVal bOn As Boolean)
+' Подсветить/снять жёлтую заливку диапазона.
+Private Sub ПодсветитьДиапазон(ByVal rng As Range, ByVal bOn As Boolean)
     On Error Resume Next
     If bOn Then
         rng.Shading.BackgroundPatternColor = CLR_YELLOW
@@ -428,32 +428,32 @@ Private Sub РџРѕРґСЃРІРµС‚РёС‚СЊР”РёР°РїР°Р·РѕРЅ(ByVal rng As Range, ByVal bOn A
     End If
 End Sub
 
-' Р”РѕР±Р°РІРёС‚СЊ СЃС‚СЂРѕРєСѓ РІ РєРѕР»Р»РµРєС†РёСЋ РїСЂРѕР±Р»РµРј (Р±РµР· РїР°РґРµРЅРёСЏ РЅР° РґСѓР±Р»РёРєР°С‚Р°С…).
-Private Sub Р”РѕР±Р°РІРёС‚СЊ(ByVal col As Collection, ByVal s As String)
+' Добавить строку в коллекцию проблем (без падения на дубликатах).
+Private Sub Добавить(ByVal col As Collection, ByVal s As String)
     On Error Resume Next
     col.Add s
 End Sub
 
-' РџРѕРєР°Р·Р°С‚СЊ РёС‚РѕРіРѕРІСѓСЋ СЃРІРѕРґРєСѓ: РѕР±РЅРѕРІР»РµРЅРѕ / РїСЂРѕР±Р»РµРјС‹ (РїРµСЂРІС‹Рµ 10).
-Private Sub РџРѕРєР°Р·Р°С‚СЊРЎРІРѕРґРєСѓ(ByVal updated As Long, ByVal problems As Collection)
+' Показать итоговую сводку: обновлено / проблемы (первые 10).
+Private Sub ПоказатьСводку(ByVal updated As Long, ByVal problems As Collection)
     Dim msg As String
     Dim i As Long, n As Long
 
-    msg = "РћР±РЅРѕРІР»РµРЅРѕ СЏС‡РµРµРє: " & updated & vbCrLf
+    msg = "Обновлено ячеек: " & updated & vbCrLf
     n = problems.Count
 
     If n = 0 Then
-        msg = msg & "РџСЂРѕР±Р»РµРјРЅС‹С… РјРµС‚РѕРє РЅРµС‚."
+        msg = msg & "Проблемных меток нет."
     Else
-        msg = msg & "РџСЂРѕР±Р»РµРјРЅС‹С… РјРµС‚РѕРє: " & n & vbCrLf & vbCrLf
+        msg = msg & "Проблемных меток: " & n & vbCrLf & vbCrLf
         For i = 1 To n
             If i > 10 Then
-                msg = msg & "вЂ¦ Рё РµС‰С‘ " & (n - 10)
+                msg = msg & "… и ещё " & (n - 10)
                 Exit For
             End If
-            msg = msg & "вЂў " & problems(i) & vbCrLf
+            msg = msg & "• " & problems(i) & vbCrLf
         Next i
     End If
 
-    MsgBox msg, IIf(n = 0, vbInformation, vbExclamation), "SmartCells вЂ” РёС‚РѕРіРё"
+    MsgBox msg, IIf(n = 0, vbInformation, vbExclamation), "SmartCells — итоги"
 End Sub

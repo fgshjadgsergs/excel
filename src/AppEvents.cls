@@ -8,17 +8,16 @@ Attribute VB_Creatable = False
 Attribute VB_PredeclaredId = False
 Attribute VB_Exposed = False
 ' =====================================================================
-'  AppEvents вЂ” РєР»Р°СЃСЃ РїРµСЂРµС…РІР°С‚Р° СЃРѕР±С‹С‚РёР№ РїСЂРёР»РѕР¶РµРЅРёСЏ Word.
-'  РЎРѕР±С‹С‚РёРµ DocumentOpen: РµСЃР»Рё РІ РѕС‚РєСЂС‹С‚РѕРј РґРѕРєСѓРјРµРЅС‚Рµ РµСЃС‚СЊ С…РѕС‚СЏ Р±С‹ РѕРґРёРЅ
-'  Content Control СЃ С‚РµРіРѕРј-РїСЂРµС„РёРєСЃРѕРј "XL:" вЂ” РІС‹РїРѕР»РЅРёС‚СЊ Р°РІС‚РѕРѕР±РЅРѕРІР»РµРЅРёРµ.
-'  Р­РєР·РµРјРїР»СЏСЂ СЃРѕР·РґР°С‘С‚СЃСЏ РІ AutoExec (РјРѕРґСѓР»СЊ AutoExecInit).
+'  AppEvents — класс перехвата событий приложения Word.
+'  Событие DocumentOpen: если в открытом документе есть хотя бы один
+'  Content Control с тегом-префиксом "XL:" — выполнить автообновление.
+'  Экземпляр создаётся в AutoExec (модуль AutoExecInit).
 ' =====================================================================
 Option Explicit
 
 Public WithEvents App As Word.Application
-Attribute App.VB_VarHelpID = -1
 
-' РђРІС‚РѕРѕР±РЅРѕРІР»РµРЅРёРµ РїСЂРё РѕС‚РєСЂС‹С‚РёРё РґРѕРєСѓРјРµРЅС‚Р°
+' Автообновление при открытии документа
 Private Sub App_DocumentOpen(ByVal Doc As Document)
     On Error Resume Next
     Dim cc As ContentControl
@@ -32,6 +31,6 @@ Private Sub App_DocumentOpen(ByVal Doc As Document)
         End If
     Next cc
 
-    ' Р•СЃС‚СЊ РјРµС‚РєРё-CC вЂ” Р·Р°РїСѓСЃРєР°РµРј РіР»Р°РІРЅСѓСЋ РєРѕРјР°РЅРґСѓ РѕР±РЅРѕРІР»РµРЅРёСЏ
-    If hasXL Then РћР±РЅРѕРІРёС‚СЊР”Р°РЅРЅС‹Рµ
+    ' Есть метки-CC — запускаем главную команду обновления
+    If hasXL Then ОбновитьДанные
 End Sub
