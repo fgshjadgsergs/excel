@@ -31,6 +31,7 @@ Private Sub App_DocumentOpen(ByVal Doc As Document)
         End If
     Next cc
 
-    ' ≈сть метки-CC Ч запускаем главную команду обновлени€
-    If hasXL Then ќбновитьƒанные
+    ' ≈сть метки-CC Ч обновл€ем именно открытый документ (передаЄм Doc
+    ' €вно: ActiveDocument в момент событи€ может быть другим)
+    If hasXL Then ќбновитьƒанныеƒок Doc
 End Sub

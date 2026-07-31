@@ -4,7 +4,8 @@ Attribute VB_Name = "AutoExecInit"
 '  Решение живёт в глобальном шаблоне (папка STARTUP), поэтому
 '  AutoExec выполняется автоматически при запуске Word:
 '    - создаётся экземпляр AppEvents (перехват DocumentOpen);
-'    - назначается сочетание Ctrl+Shift+U на команду «ОбновитьДанные».
+'    - назначается сочетание Ctrl+Shift+U на команду «ОбновитьДанные»;
+'    - создаётся панель кнопок на вкладке «Надстройки».
 ' =====================================================================
 Option Explicit
 
@@ -25,14 +26,20 @@ Public Sub ИнициализироватьSmartCells()
     If gAppEvents Is Nothing Then Set gAppEvents = New AppEvents
     Set gAppEvents.App = Word.Application
 
-    ' 2. Горячая клавиша Ctrl+Shift+U -> ОбновитьДанные
-    CustomizationContext = NormalTemplate
+    ' 2. Горячая клавиша Ctrl+Shift+U -> ОбновитьДанные.
+    '    Привязку пишем в САМ шаблон надстройки (не в Normal.dotm!):
+    '    она живёт, пока надстройка загружена, и исчезает вместе с ней.
+    '    Категория для VBA-макросов — wdKeyCategoryMacro.
+    CustomizationContext = ThisDocument
     KeyBindings.Add KeyCode:=BuildKeyCode(wdKeyControl, wdKeyShift, wdKeyU), _
-                    KeyCategory:=wdKeyCategoryCommand, _
+                    KeyCategory:=wdKeyCategoryMacro, _
                     Command:="ОбновитьДанные"
 
     ' 3. Панель кнопок SmartCells — появляется сама на вкладке «Надстройки»
     СоздатьПанельSmartCells
+
+    ' Не считать шаблон изменённым — иначе Word спросит о сохранении
+    ThisDocument.Saved = True
 End Sub
 
 ' Создать панель с кнопками команд (вкладка «Надстройки» ленты Word).

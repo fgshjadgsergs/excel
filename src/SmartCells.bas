@@ -2,8 +2,8 @@ Attribute VB_Name = "SmartCells"
 ' =====================================================================
 '  SmartCells Ч подстановка значений €чеек Excel в текст документа Word
 '  ќсновной модуль: команды, разбор меток, работа с Excel, сводка.
-'  ћеханика: метки {адрес} превращаютс€ в Content Control с тегом
-'  "XL:адрес"; повторное обновление идЄт по этим CC.
+'  ћеханика: метки {адрес} или {Ћист!адрес} превращаютс€ в Content
+'  Control с тегом "XL:ссылка"; повторное обновление идЄт по этим CC.
 ' =====================================================================
 Option Explicit
 
@@ -21,19 +21,37 @@ Private Const CC_TITLE As String = "SmartCells"
 Private Const CLR_YELLOW As Long = 65535           ' wdColorYellow
 Private Const CLR_AUTO As Long = -16777216         ' wdColorAutomatic (без заливки)
 
+' --- ѕрочие константы ---
+Private Const XL_CALC_AUTO As Long = -4105         ' xlCalculationAutomatic
+' Ђѕароль-заглушкаї: дл€ файла без парол€ игнорируетс€, дл€ защищЄнного
+' даЄт перехватываемую ошибку вместо невидимого модального диалога Excel
+Private Const PWD_STUB As String = "#SmartCellsNoPwd#"
+
 ' =====================================================================
-'  √Ћј¬Ќјя  ќћјЌƒј: обновить все значени€ в документе
+'  √Ћј¬Ќјя  ќћјЌƒј: обновить все значени€ в активном документе
 ' =====================================================================
 Public Sub ќбновитьƒанные()
+    ' «ащита: команда доступна с панели и без открытых документов
+    If Documents.Count = 0 Then
+        MsgBox "Ќет открытого документа.", vbExclamation, "SmartCells"
+        Exit Sub
+    End If
+    ќбновитьƒанныеƒок ActiveDocument
+End Sub
+
+' ---------------------------------------------------------------------
+'  ќбновление конкретного документа (вызываетс€ также из AppEvents
+'  при событии DocumentOpen Ч там документ передаЄтс€ €вно).
+' ---------------------------------------------------------------------
+Public Sub ќбновитьƒанныеƒок(ByVal doc As Document)
     Dim sPath As String, sSheet As String
     Dim xlApp As Object, xlWb As Object, xlWs As Object
-    Dim doc As Document
     Dim updated As Long
-    Dim aborted As Boolean
+    Dim sFatal As String                 ' текст фатальной ошибки (показ после закрыти€ Excel)
     Dim problems As Collection
     Set problems = New Collection
 
-    ' 1. ѕрочитать настройки, при отсутствии Ч вызвать диалог
+    ' 1. ѕрочитать настройки, при отсутствии Ч сначала диалог настроек
     If Not ѕрочитатьЌастройки(sPath, sSheet) Then
         ЌастройкиSmartCells
         If Not ѕрочитатьЌастройки(sPath, sSheet) Then
@@ -44,7 +62,7 @@ Public Sub ќбновитьƒанные()
     End If
 
     ' 2. ѕроверить наличие файла Excel Ч если нет, документ не трогаем вообще
-    If Len(Dir(sPath)) = 0 Then
+    If Not ‘айл—уществует(sPath) Then
         MsgBox "‘айл Excel не найден по пути:" & vbCrLf & vbCrLf & _
                sPath & vbCrLf & vbCrLf & _
                "ѕроверьте путь через команду ЂЌастройкиSmartCellsї.", _
@@ -52,7 +70,6 @@ Public Sub ќбновитьƒанные()
         Exit Sub
     End If
 
-    Set doc = ActiveDocument
     Application.ScreenUpdating = False
 
     ' 3. ќткрыть Excel один раз на весь проход (late binding, ReadOnly, невидимо)
@@ -60,16 +77,22 @@ Public Sub ќбновитьƒанные()
     Set xlApp = CreateObject("Excel.Application")
     xlApp.Visible = False
     xlApp.DisplayAlerts = False
-    Set xlWb = xlApp.Workbooks.Open(FileName:=sPath, ReadOnly:=True, AddToMru:=False)
+    Set xlWb = xlApp.Workbooks.Open(FileName:=sPath, ReadOnly:=True, _
+                                    AddToMru:=False, UpdateLinks:=0, _
+                                    Password:=PWD_STUB)
 
-    ' Ќайти нужный лист; если листа нет Ч документ не мен€ем
+    ' ¬ключить автопересчЄт: если книга сохранена в ручном режиме,
+    ' формулы могли остатьс€ с несвежими значени€ми
+    On Error Resume Next
+    xlApp.Calculation = XL_CALC_AUTO
+    On Error GoTo Fail
+
+    ' Ќайти лист по умолчанию; если листа нет Ч документ не мен€ем
     Set xlWs = ЌайтиЋист(xlWb, sSheet)
     If xlWs Is Nothing Then
-        MsgBox "Ћист Ђ" & sSheet & "ї не найден в книге:" & vbCrLf & _
-               sPath & vbCrLf & vbCrLf & _
-               "ѕроверьте им€ листа через ЂЌастройкиSmartCellsї.", _
-               vbExclamation, "SmartCells"
-        aborted = True
+        sFatal = "Ћист Ђ" & sSheet & "ї не найден в книге:" & vbCrLf & _
+                 sPath & vbCrLf & vbCrLf & _
+                 "ѕроверьте им€ листа через ЂЌастройкиSmartCellsї."
         GoTo CleanUp
     End If
 
@@ -91,22 +114,26 @@ CleanUp:
     Application.ScreenUpdating = True
     On Error GoTo 0
 
-    ' 6. »тогова€ сводка (не показываем, если проход прерван до начала)
-    If Not aborted Then ѕоказать—водку updated, problems
+    ' 6. —ообщени€ Ч только ѕќ—Ћ≈ закрыти€ Excel (чтобы модальное окно
+    '    не держало невидимый процесс EXCEL.EXE)
+    If Len(sFatal) > 0 Then
+        MsgBox sFatal, vbExclamation, "SmartCells"
+    Else
+        ѕоказать—водку updated, problems
+    End If
     Exit Sub
 
 Fail:
-    Dim sErr As String
-    sErr = Err.Description
-    MsgBox "ќшибка при обновлении данных:" & vbCrLf & sErr, _
-           vbCritical, "SmartCells"
+    sFatal = "ќшибка при обновлении данных:" & vbCrLf & Err.Description
     Resume CleanUp
 End Sub
 
 ' ---------------------------------------------------------------------
 '  ѕроход (а): поиск меток {адрес} или {Ћист!адрес} и превращение их в CC.
-'  ѕроблемные метки (кириллица в адресе, некорректный адрес) Ч подсветить
-'  и включить в список, текст не трогать.
+'  —овпадени€ внутри уже существующих CC пропускаютс€ (их обновит проход
+'  (б) по тегу) Ч иначе Word падает на попытке вложенного контрола.
+'  ќбычный текст в скобках ({»того}, {примечание 1}) меткой не считаетс€
+'  и не трогаетс€. ѕроблемные метки Ч подсветить и включить в список.
 ' ---------------------------------------------------------------------
 Private Sub ѕройтиѕо“ексту(ByVal doc As Document, ByVal problems As Collection)
     Dim rng As Range
@@ -126,39 +153,51 @@ Private Sub ѕройтиѕо“ексту(ByVal doc As Document, ByVal problems As Collection)
         .Text = "\{[0-9A-Za-zј-яа-€®Є !_]@\}"
 
         Do While .Execute
-            ' rng указывает на найденную метку вида {A5} или {Ћист!A5}
-            inner = Mid$(rng.Text, 2, Len(rng.Text) - 2)   ' содержимое без скобок
-            –азобрать—сылку inner, sheetName, addr
-
-            If —одержит ириллицу(addr) Then
-                ' –усские буквы в јƒ–≈—≈ Ч часта€ ошибка (им€ листа может быть русским)
-                ѕодсветитьƒиапазон rng, True
-                ƒобавить problems, inner & " Ч адрес набран русскими буквами"
+            ' —овпадение внутри существующего контрола (например, метка,
+            ' оставша€с€ в CC после проблемной €чейки) Ч пропустить:
+            ' вложенные CC запрещены, а этот CC обработает проход (б)
+            If Not rng.ParentContentControl Is Nothing Then
                 rng.Collapse wdCollapseEnd
-
-            ElseIf  орректныйјдрес(addr) Then
-                '  орректна€ метка Ч превращаем в Content Control.
-                ' ¬ тег пишем адрес в верхнем регистре, им€ листа Ч как есть.
-                If Len(sheetName) > 0 Then
-                    ref = sheetName & "!" & UCase$(addr)
-                Else
-                    ref = UCase$(addr)
-                End If
-                Set cc = doc.ContentControls.Add(wdContentControlText, rng)
-                cc.Tag = TAG_PREFIX & ref
-                cc.Title = CC_TITLE
-                ' «начение подставит проход (б); rng теперь Ч диапазон CC
-                rng.SetRange cc.Range.End, cc.Range.End
-
+                rng.End = doc.Content.End
             Else
-                ' Ќекорректный формат адреса (например {5A})
-                ѕодсветитьƒиапазон rng, True
-                ƒобавить problems, inner & " Ч некорректный адрес"
-                rng.Collapse wdCollapseEnd
-            End If
+                ' rng указывает на найденную метку вида {A5} или {Ћист!A5}
+                inner = Mid$(rng.Text, 2, Len(rng.Text) - 2)   ' содержимое без скобок
+                –азобрать—сылку inner, sheetName, addr
 
-            ' ѕродолжить поиск от текущей позиции до конца документа
-            rng.End = doc.Content.End
+                If Not ѕохожеЌаћетку(sheetName, addr) Then
+                    ' ќбычный текст в фигурных скобках Ч не метка, не трогаем
+                    rng.Collapse wdCollapseEnd
+
+                ElseIf —одержит ириллицу(addr) Then
+                    ' –усские буквы в јƒ–≈—≈ Ч часта€ ошибка (им€ листа может быть русским)
+                    ѕодсветитьƒиапазон rng, True
+                    ƒобавить problems, inner & " Ч адрес набран русскими буквами"
+                    rng.Collapse wdCollapseEnd
+
+                ElseIf  орректныйјдрес(addr) Then
+                    '  орректна€ метка Ч превращаем в Content Control.
+                    ' ¬ тег пишем адрес в верхнем регистре, им€ листа Ч как есть.
+                    If Len(sheetName) > 0 Then
+                        ref = sheetName & "!" & UCase$(addr)
+                    Else
+                        ref = UCase$(addr)
+                    End If
+                    Set cc = doc.ContentControls.Add(wdContentControlText, rng)
+                    cc.Tag = TAG_PREFIX & ref
+                    cc.Title = CC_TITLE
+                    ' «начение подставит проход (б); rng теперь Ч диапазон CC
+                    rng.SetRange cc.Range.End, cc.Range.End
+
+                Else
+                    ' Ќекорректный формат адреса (например {5A})
+                    ѕодсветитьƒиапазон rng, True
+                    ƒобавить problems, inner & " Ч некорректный адрес"
+                    rng.Collapse wdCollapseEnd
+                End If
+
+                ' ѕродолжить поиск от текущей позиции до конца документа
+                rng.End = doc.Content.End
+            End If
         Loop
     End With
 End Sub
@@ -172,7 +211,7 @@ Private Function ѕройтиѕоCC(ByVal doc As Document, ByVal wb As Object, _
                             ByVal defaultWs As Object, ByVal problems As Collection) As Long
     Dim cc As ContentControl
     Dim ref As String, sheetName As String, addr As String
-    Dim val As String, reason As String
+    Dim sVal As String, reason As String
     Dim ws As Object
     Dim code As Long
     Dim updated As Long
@@ -194,11 +233,11 @@ Private Function ѕройтиѕоCC(ByVal doc As Document, ByVal wb As Object, _
                 ѕодсветитьƒиапазон cc.Range, True
                 ƒобавить problems, ref & " Ч лист Ђ" & sheetName & "ї не найден"
             Else
-                code = ѕрочитатьячейку(ws, addr, val, reason)
+                code = ѕрочитатьячейку(ws, addr, sVal, reason)
                 Select Case code
                     Case 0
                         ' ”спех Ч подставить значение, сн€ть подсветку
-                        cc.Range.Text = val
+                        cc.Range.Text = sVal
                         ѕодсветитьƒиапазон cc.Range, False
                         updated = updated + 1
                     Case Else
@@ -231,18 +270,49 @@ Private Sub –азобрать—сылку(ByVal s As String, ByRef sheetName As String, _
 End Sub
 
 ' ---------------------------------------------------------------------
+'  ѕохоже ли содержимое скобок на метку (а не на обычный текст).
+'  ћетка-кандидат: указан лист ({Ћист!A5}), либо коротка€ строка без
+'  пробелов и подчЄркиваний, где есть и буквы, и цифры ({A5}, {ј5}, {5A}).
+'  ¬сЄ остальное ({»того}, {примечание 1}) Ч обычный текст, пропускаем.
+' ---------------------------------------------------------------------
+Private Function ѕохожеЌаћетку(ByVal sheetName As String, ByVal addr As String) As Boolean
+    Dim i As Long, ch As String
+    Dim hasLetter As Boolean, hasDigit As Boolean
+
+    If Len(sheetName) > 0 Then      ' есть Ђ!ї Ч пользователь €вно писал метку
+        ѕохожеЌаћетку = True
+        Exit Function
+    End If
+    If Len(addr) = 0 Or Len(addr) > 11 Then Exit Function
+    If InStr(addr, " ") > 0 Or InStr(addr, "_") > 0 Then Exit Function
+
+    For i = 1 To Len(addr)
+        ch = Mid$(addr, i, 1)
+        If ch >= "0" And ch <= "9" Then hasDigit = True Else hasLetter = True
+    Next i
+    ѕохожеЌаћетку = hasLetter And hasDigit
+End Function
+
+' ---------------------------------------------------------------------
 '  „тение одной €чейки. ¬озврат: 0 Ч успех, иначе код проблемы.
-'  out  Ч подставл€емое значение (при code=0)
+'  sOut Ч подставл€емое значение (при code=0)
 '  reason Ч причина проблемы (при code<>0)
 ' ---------------------------------------------------------------------
 Private Function ѕрочитатьячейку(ByVal ws As Object, ByVal addr As String, _
-                                 ByRef out As String, ByRef reason As String) As Long
+                                 ByRef sOut As String, ByRef reason As String) As Long
     Dim rng As Object
     Dim t As String
 
     On Error GoTo BadAddr
     Set rng = ws.Range(addr)        ' некорректный/вне сетки адрес -> ошибка
-    On Error GoTo 0
+    On Error GoTo ReadFail          ' дальше любые сбои чтени€ Ч код 5
+
+    ' ƒиапазон вместо одиночной €чейки (возможно при ручной правке тега)
+    If rng.Cells.Count > 1 Then
+        reason = "метка ссылаетс€ на диапазон, а не на одну €чейку"
+        ѕрочитатьячейку = 4
+        Exit Function
+    End If
 
     ' ячейка с ошибкой Excel (#ƒ≈Ћ/0! и т.п.)
     If IsError(rng.Value2) Then
@@ -251,9 +321,19 @@ Private Function ѕрочитатьячейку(ByVal ws As Object, ByVal addr As String, _
         Exit Function
     End If
 
-    ' «начение Ч как видит пользователь; при узкой колонке (####) Ч из Value2
+    ' «начение Ч как видит пользователь (rng.Text)
     t = CStr(rng.Text)
-    If Len(t) > 0 And “олько–ешЄтки(t) Then t = CStr(rng.Value2)
+
+    ' ”зка€ колонка (Ђ####ї): расширить колонку в пам€ти и перечитать Ч
+    ' fallback на Value2 сразу нельз€: дл€ даты он вернул бы Ђ45870ї
+    ' вместо Ђ15.07.2026ї.  нига открыта ReadOnly Ч на диск не пишетс€.
+    If Len(t) > 0 And “олько–ешЄтки(t) Then
+        On Error Resume Next
+        rng.EntireColumn.AutoFit
+        On Error GoTo ReadFail
+        t = CStr(rng.Text)
+        If “олько–ешЄтки(t) Then t = CStr(rng.Value2)   ' последний резерв
+    End If
 
     ' ѕуста€ €чейка Ч пустую строку не подставл€ем
     If IsEmpty(rng.Value2) Or Len(t) = 0 Then
@@ -262,13 +342,24 @@ Private Function ѕрочитатьячейку(ByVal ws As Object, ByVal addr As String, _
         Exit Function
     End If
 
-    out = t
+    ' ѕереводы строк (Alt+Enter в Excel) замен€ем пробелами:
+    ' plain-text CC без MultiLine не принимает текст с переводом строки
+    t = Replace(t, vbCrLf, " ")
+    t = Replace(t, vbLf, " ")
+    t = Replace(t, vbCr, " ")
+
+    sOut = t
     ѕрочитатьячейку = 0
     Exit Function
 
 BadAddr:
     reason = "некорректный адрес или адрес вне листа"
     ѕрочитатьячейку = 3
+    Exit Function
+
+ReadFail:
+    reason = "не удалось прочитать €чейку (" & Err.Description & ")"
+    ѕрочитатьячейку = 5
 End Function
 
 ' =====================================================================
@@ -277,14 +368,15 @@ End Function
 Public Sub ЌастройкиSmartCells()
     Dim sPath As String, sSheet As String
     Dim curPath As String, curSheet As String
+    Dim reason As String
 
     ѕрочитатьЌастройки curPath, curSheet   ' текущие значени€ как подсказка
 
     ' Ўаг 1. ѕуть к файлу
-    sPath = Trim$(InputBox("ѕолный путь к файлу Excel (.xlsx):", _
-                           "SmartCells Ч настройки (1/2)", curPath))
+    sPath = ќчиститьѕуть(InputBox("ѕолный путь к файлу Excel (.xlsx):", _
+                                  "SmartCells Ч настройки (1/2)", curPath))
     If Len(sPath) = 0 Then Exit Sub        ' пользователь отменил
-    If Len(Dir(sPath)) = 0 Then
+    If Not ‘айл—уществует(sPath) Then
         MsgBox "‘айл не найден по указанному пути:" & vbCrLf & sPath, _
                vbExclamation, "SmartCells"
         Exit Sub
@@ -295,9 +387,10 @@ Public Sub ЌастройкиSmartCells()
                             "SmartCells Ч настройки (2/2)", curSheet))
     If Len(sSheet) = 0 Then Exit Sub
 
-    If Not Ћист—уществует(sPath, sSheet) Then
-        MsgBox "Ћист Ђ" & sSheet & "ї не найден в книге:" & vbCrLf & sPath, _
-               vbExclamation, "SmartCells"
+    ' ѕроверка: книга открываетс€ и лист существует (с вн€тной причиной)
+    If Not ѕроверить нигу»Ћист(sPath, sSheet, reason) Then
+        MsgBox "ѕроверка не пройдена:" & vbCrLf & reason & vbCrLf & vbCrLf & _
+               "‘айл: " & sPath, vbExclamation, "SmartCells"
         Exit Sub
     End If
 
@@ -320,6 +413,12 @@ Public Sub ”брать—в€зьSmartCells()
     Dim i As Long
     Dim removed As Long
 
+    ' «ащита: команда доступна с панели и без открытых документов
+    If Documents.Count = 0 Then
+        MsgBox "Ќет открытого документа.", vbExclamation, "SmartCells"
+        Exit Sub
+    End If
+
     ans = MsgBox("—н€ть св€зь по всему документу?" & vbCrLf & vbCrLf & _
                  "ƒа Ч весь документ; Ќет Ч только выделение.", _
                  vbQuestion + vbYesNoCancel, "SmartCells")
@@ -340,6 +439,18 @@ Public Sub ”брать—в€зьSmartCells()
         End If
     Next i
 
+    '  урсор стоит ¬Ќ”“–» метки-CC (выделение не охватывает контрол
+    ' целиком) Ч сн€ть и этот контрол тоже
+    If ans = vbNo Then
+        Set cc = Selection.Range.ParentContentControl
+        If Not cc Is Nothing Then
+            If Left$(cc.Tag, Len(TAG_PREFIX)) = TAG_PREFIX Then
+                cc.Delete False
+                removed = removed + 1
+            End If
+        End If
+    End If
+
     MsgBox "—в€зь сн€та. ќбработано меток: " & removed, _
            vbInformation, "SmartCells"
 End Sub
@@ -348,10 +459,23 @@ End Sub
 '  ¬—ѕќћќ√ј“≈Ћ№Ќџ≈ ѕ–ќ÷≈ƒ”–џ
 ' =====================================================================
 
+' ѕрочистить путь из буфера обмена: убрать кавычки (Ђ опировать как путьї
+' в ѕроводнике добавл€ет их) и лишние пробелы.
+Private Function ќчиститьѕуть(ByVal s As String) As String
+    ќчиститьѕуть = Trim$(Replace(s, Chr$(34), ""))
+End Function
+
+' —уществует ли файл (защищено от ошибок Dir на кривых пут€х/отключЄнных дисках).
+Private Function ‘айл—уществует(ByVal sPath As String) As Boolean
+    On Error Resume Next
+    ‘айл—уществует = (Len(Dir(sPath)) > 0)
+    On Error GoTo 0
+End Function
+
 ' ѕрочитать настройки из реестра. True, если оба значени€ заданы.
 Private Function ѕрочитатьЌастройки(ByRef sPath As String, _
                                     ByRef sSheet As String) As Boolean
-    sPath = GetSetting(REG_APP, REG_SECTION, KEY_PATH, "")
+    sPath = ќчиститьѕуть(GetSetting(REG_APP, REG_SECTION, KEY_PATH, ""))
     sSheet = GetSetting(REG_APP, REG_SECTION, KEY_SHEET, "")
     ѕрочитатьЌастройки = (Len(sPath) > 0 And Len(sSheet) > 0)
 End Function
@@ -368,19 +492,38 @@ Private Function ЌайтиЋист(ByVal wb As Object, ByVal sSheet As String) As Object
     Set ЌайтиЋист = Nothing
 End Function
 
-' ѕроверить наличие листа в книге (открыть на чтение и закрыть).
-Private Function Ћист—уществует(ByVal sPath As String, _
-                                ByVal sSheet As String) As Boolean
+' ѕроверить, что книга открываетс€ и лист существует.
+' –азличает причины: Ђкнига не открыласьї и Ђлиста нетї.
+Private Function ѕроверить нигу»Ћист(ByVal sPath As String, ByVal sSheet As String, _
+                                     ByRef reason As String) As Boolean
     Dim xlApp As Object, xlWb As Object, ws As Object
-    On Error GoTo Done
+    On Error Resume Next
+
     Set xlApp = CreateObject("Excel.Application")
+    If xlApp Is Nothing Then
+        reason = "не удалось запустить Excel"
+        GoTo Done
+    End If
     xlApp.Visible = False
     xlApp.DisplayAlerts = False
-    Set xlWb = xlApp.Workbooks.Open(FileName:=sPath, ReadOnly:=True, AddToMru:=False)
+
+    Err.Clear
+    Set xlWb = xlApp.Workbooks.Open(FileName:=sPath, ReadOnly:=True, _
+                                    AddToMru:=False, UpdateLinks:=0, _
+                                    Password:=PWD_STUB)
+    If xlWb Is Nothing Then
+        reason = "не удалось открыть книгу (файл зан€т, повреждЄн или защищЄн паролем)"
+        GoTo Done
+    End If
+
     Set ws = ЌайтиЋист(xlWb, sSheet)
-    Ћист—уществует = Not (ws Is Nothing)
+    If ws Is Nothing Then
+        reason = "в книге нет листа Ђ" & sSheet & "ї"
+    Else
+        ѕроверить нигу»Ћист = True
+    End If
+
 Done:
-    On Error Resume Next
     If Not xlWb Is Nothing Then xlWb.Close SaveChanges:=False
     If Not xlApp Is Nothing Then xlApp.Quit
     Set ws = Nothing: Set xlWb = Nothing: Set xlApp = Nothing
